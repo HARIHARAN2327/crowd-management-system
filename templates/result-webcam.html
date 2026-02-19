@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Crowd Counting - Live Prediction</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: #0d1117;
+            font-family: "Arial Black", Gadget, sans-serif;
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* ── Header ── */
+        #header {
+            width: 100%;
+            padding: 20px 40px;
+            background-color: #161b22;
+            border-bottom: 3px solid #f23165;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        #header h1 {
+            color: white;
+            font-size: 1.4rem;
+            letter-spacing: 1px;
+        }
+
+        #header h1 span {
+            color: #f23165;
+        }
+
+        /* ── Video Container ── */
+        #video-wrapper {
+            width: 90%;
+            max-width: 1100px;
+            margin: 30px auto 20px auto;
+            position: relative;
+            background-color: #000;
+            border: 2px solid #f23165;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        /* The actual stream — fills container, no layout jump */
+        #video-stream {
+            width: 100%;
+            height: auto;
+            display: block;
+            object-fit: contain;
+        }
+
+        /* Overlay badge shown on top of video */
+        #live-badge {
+            position: absolute;
+            top: 14px;
+            right: 14px;
+            background-color: #f23165;
+            color: white;
+            font-size: 0.75rem;
+            font-weight: bold;
+            padding: 4px 10px;
+            border-radius: 20px;
+            letter-spacing: 1px;
+        }
+
+        /* ── Stats Bar ── */
+        #stats-bar {
+            width: 90%;
+            max-width: 1100px;
+            display: flex;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            flex: 1;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            padding: 16px 20px;
+            text-align: center;
+        }
+
+        .stat-card .label {
+            font-size: 0.75rem;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            font-family: Arial, sans-serif;
+        }
+
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #f23165;
+        }
+
+        .stat-card.green .value  { color: #3fb950; }
+        .stat-card.yellow .value { color: #d29922; }
+        .stat-card.blue .value   { color: #58a6ff; }
+
+        /* ── Stop Button ── */
+        #stop-form {
+            margin-bottom: 40px;
+        }
+
+        #stop-video {
+            font-family: Arial, sans-serif;
+            font-weight: bold;
+            padding: 12px 32px;
+            font-size: 1rem;
+            color: white;
+            background-color: #f23165;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            letter-spacing: 0.5px;
+        }
+
+        #stop-video:hover {
+            background-color: #c71d4f;
+        }
+
+        /* ── No-stream fallback message ── */
+        #no-stream {
+            display: none;
+            padding: 60px 20px;
+            color: #8b949e;
+            font-family: Arial, sans-serif;
+            font-size: 1rem;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Header -->
+    <div id="header">
+        <h1>Crowd Counting &nbsp;<span>Live</span></h1>
+        <form id="stop-form" method="post" action="/">
+            <input type="text" name="method" id="method" hidden value="{{ Method }}"/>
+            <button type="submit" id="stop-video" name="stop-video" value="stop-video">
+                &#9632; &nbsp; Stop Webcam
+            </button>
+        </form>
+    </div>
+
+    <!-- Video Stream -->
+    <div id="video-wrapper">
+        <span id="live-badge">● LIVE</span>
+
+        <!--
+            This is the key tag that was MISSING from your original HTML.
+            It connects to the Flask route that streams MJPEG frames.
+        -->
+        <img id="video-stream"
+             src="{{ url_for('video_feed') }}"
+             alt="Video stream loading..."
+             onerror="document.getElementById('no-stream').style.display='block';
+                      this.style.display='none';" />
+
+        <div id="no-stream">
+            ⚠️ Video stream unavailable.<br>
+            Check that your webcam is connected and the server is running.
+        </div>
+    </div>
+
+    <!-- Stats Cards (updated via JS polling) -->
+    <div id="stats-bar">
+        <div class="stat-card green">
+            <div class="label">Person Count</div>
+            <div class="value" id="count-value">—</div>
+        </div>
+        <div class="stat-card yellow">
+            <div class="label">Stream FPS</div>
+            <div class="value" id="fps-value">—</div>
+        </div>
+        <div class="stat-card blue">
+            <div class="label">Device</div>
+            <div class="value" id="device-value">—</div>
+        </div>
+    </div>
+
+</body>
+
+<!-- Poll /stats every second to update the cards below the video -->
+<script>
+    async function updateStats() {
+        try {
+            const res  = await fetch('/stats');
+            const data = await res.json();
+            document.getElementById('count-value').textContent  = data.count  ?? '—';
+            document.getElementById('fps-value').textContent    = data.fps    ?? '—';
+            document.getElementById('device-value').textContent = data.device ?? '—';
+        } catch (e) {
+            // Server not reachable — silently ignore
+        }
+    }
+    setInterval(updateStats, 1000);
+    updateStats();
+</script>
+
+</html>

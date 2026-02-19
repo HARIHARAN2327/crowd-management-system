@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CrowdSense — Crowd Management Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700;900&family=Barlow+Condensed:wght@700;900&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg:        #080c12;
+    --surface:   #0d1420;
+    --surface2:  #111a28;
+    --border:    #1e2d42;
+    --accent:    #00d4ff;
+    --accent2:   #ff6b35;
+    --warn:      #f5a623;
+    --crit:      #ff2d55;
+    --low:       #00e676;
+    --text:      #e2eaf5;
+    --muted:     #4a6080;
+    --mono:      'Share Tech Mono', monospace;
+    --sans:      'Barlow', sans-serif;
+    --cond:      'Barlow Condensed', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Scanline overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.07) 2px,
+      rgba(0,0,0,0.07) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── Top bar ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    height: 58px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 100;
+  }
+
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .logo-icon {
+    width: 32px; height: 32px;
+    border: 2px solid var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+    box-shadow: 0 0 12px rgba(0,212,255,0.3);
+  }
+  .logo-icon::after {
+    content: '';
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50%      { opacity:0.4; transform:scale(1.3); }
+  }
+  .logo-text {
+    font-family: var(--cond);
+    font-size: 20px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: var(--text);
+  }
+  .logo-text span { color: var(--accent); }
+
+  .header-right {
+    display: flex; align-items: center; gap: 20px;
+  }
+  .live-badge {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--low);
+    letter-spacing: 1px;
+  }
+  .live-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--low);
+    animation: blink 1s infinite;
+  }
+  @keyframes blink {
+    0%,100% { opacity:1; }
+    50%      { opacity:0.2; }
+  }
+  .timestamp {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ── Action buttons ── */
+  .btn {
+    font-family: var(--cond);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 1.5px;
+    padding: 8px 20px;
+    border: 1px solid;
+    border-radius: 4px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.2s;
+  }
+  .btn-start {
+    background: transparent;
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .btn-start:hover {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: 0 0 20px rgba(0,212,255,0.4);
+  }
+  .btn-stop {
+    background: var(--crit);
+    border-color: var(--crit);
+    color: #fff;
+  }
+  .btn-stop:hover {
+    box-shadow: 0 0 20px rgba(255,45,85,0.5);
+  }
+
+  /* ── Main layout ── */
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    height: calc(100vh - 58px);
+  }
+
+  /* ── Status strip ── */
+  .status-strip {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .status-item {
+    flex: 1;
+    padding: 10px 20px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .status-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+  .status-val {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 400;
+    line-height: 1;
+  }
+  .status-val.low   { color: var(--low); }
+  .status-val.warn  { color: var(--warn); }
+  .status-val.crit  { color: var(--crit); }
+  .status-val.info  { color: var(--accent); }
+
+  .risk-pill {
+    margin-left: auto;
+    padding: 0 32px;
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 140px;
+  }
+  .risk-label-text {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1.5px;
+  }
+  .risk-value {
+    font-family: var(--cond);
+    font-size: 28px;
+    font-weight: 900;
+    letter-spacing: 3px;
+    color: var(--low);
+  }
+
+  /* ── Video area ── */
+  .video-area {
+    background: #000;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .video-grid {
+    width: 100%; height: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 2px;
+    background: var(--border);
+  }
+
+  .panel {
+    background: #0a0e15;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .panel-label {
+    position: absolute;
+    top: 8px; left: 8px;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    color: rgba(255,255,255,0.5);
+    background: rgba(0,0,0,0.6);
+    padding: 3px 8px;
+    border-radius: 2px;
+    text-transform: uppercase;
+    z-index: 10;
+  }
+
+  /* Simulated panel content */
+  .panel-live {
+    background: linear-gradient(135deg, #1a2030 0%, #050c14 100%);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .panel-live .placeholder-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  /* Corner brackets on video area */
+  .corner {
+    position: absolute;
+    width: 20px; height: 20px;
+    border-color: var(--accent);
+    border-style: solid;
+    opacity: 0.6;
+    z-index: 20;
+  }
+  .corner-tl { top: 8px; left: 8px; border-width: 2px 0 0 2px; }
+  .corner-tr { top: 8px; right: 8px; border-width: 2px 2px 0 0; }
+  .corner-bl { bottom: 8px; left: 8px; border-width: 0 0 2px 2px; }
+  .corner-br { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+
+  /* Overlay stats on live panel */
+  .live-overlay {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 8px 12px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.85));
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+    z-index: 10;
+  }
+  .overlay-stat {
+    display: flex; flex-direction: column;
+  }
+  .overlay-stat-label { font-family: var(--mono); font-size: 8px; color: var(--muted); letter-spacing: 1px; }
+  .overlay-stat-val   { font-family: var(--mono); font-size: 14px; color: var(--accent); }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .sidebar-section {
+    border-bottom: 1px solid var(--border);
+    padding: 16px;
+  }
+  .sidebar-section:last-child { border-bottom: none; }
+
+  .section-title {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Metric cards */
+  .metric-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .metric-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    position: relative;
+    overflow: hidden;
+  }
+  .metric-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+    opacity: 0.5;
+  }
+  .metric-card.warn-card::before { background: var(--warn); }
+  .metric-card.crit-card::before { background: var(--crit); }
+  .metric-card.low-card::before  { background: var(--low);  }
+
+  .metric-name {
+    font-family: var(--mono);
+    font-size: 8px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .metric-number {
+    font-family: var(--mono);
+    font-size: 24px;
+    line-height: 1;
+    color: var(--text);
+  }
+  .metric-unit {
+    font-size: 10px;
+    color: var(--muted);
+    margin-left: 2px;
+  }
+
+  /* Risk gauge */
+  .risk-gauge-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .gauge {
+    width: 100%;
+    height: 8px;
+    background: var(--surface2);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .gauge-fill {
+    height: 100%;
+    width: 12%;
+    background: linear-gradient(90deg, var(--low), var(--warn), var(--crit));
+    border-radius: 4px;
+    transition: width 0.5s ease;
+    position: relative;
+  }
+  .gauge-labels {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 8px;
+    color: var(--muted);
+  }
+
+  /* History chart placeholder */
+  .chart-area {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    height: 110px;
+    position: relative;
+    overflow: hidden;
+  }
+  .chart-svg {
+    width: 100%; height: 100%;
+  }
+  .chart-legend {
+    display: flex; gap: 12px;
+    margin-top: 6px;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 4px;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+  }
+  .legend-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+  }
+
+  /* Alert feed */
+  .alert-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 130px;
+    overflow-y: auto;
+  }
+  .alert-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid;
+    font-size: 11px;
+  }
+  .alert-item.low  { border-left-color: var(--low);  }
+  .alert-item.warn { border-left-color: var(--warn); }
+  .alert-item.crit { border-left-color: var(--crit); }
+  .alert-time {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    white-space: nowrap;
+    margin-top: 1px;
+  }
+  .alert-msg {
+    font-family: var(--sans);
+    font-size: 11px;
+    color: var(--text);
+    line-height: 1.3;
+  }
+
+  /* Camera selector */
+  .cam-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .cam-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    transition: all 0.15s;
+  }
+  .cam-item.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(0,212,255,0.05);
+  }
+  .cam-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .cam-item.active .cam-dot { background: var(--accent); animation: blink 1s infinite; }
+
+  /* System status */
+  .sys-list {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .sys-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--mono); font-size: 10px;
+  }
+  .sys-key { color: var(--muted); }
+  .sys-val { color: var(--text); }
+  .sys-val.ok   { color: var(--low);  }
+  .sys-val.warn { color: var(--warn); }
+
+  /* Scrollbar */
+  .sidebar::-webkit-scrollbar { width: 3px; }
+  .sidebar::-webkit-scrollbar-track { background: transparent; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Fake SVG chart animation */
+  @keyframes drawLine { from { stroke-dashoffset: 1000; } to { stroke-dashoffset: 0; } }
+  .chart-line { stroke-dasharray: 1000; animation: drawLine 2s ease forwards; }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="logo">
+    <div class="logo-icon"></div>
+    <div class="logo-text">CROWD<span>SENSE</span></div>
+  </div>
+  <div class="header-right">
+    <div class="live-badge"><div class="live-dot"></div> LIVE</div>
+    <div class="timestamp" id="clock">21:43:00</div>
+    <button class="btn btn-start" id="startBtn">▶ Start</button>
+    <button class="btn btn-stop" id="stopBtn" style="display:none">■ Stop</button>
+  </div>
+</header>
+
+<!-- ── Layout ── -->
+<div class="layout">
+
+  <!-- Status Strip -->
+  <div class="status-strip">
+    <div class="status-item">
+      <div class="status-label">Count</div>
+      <div class="status-val low" id="statusCount">4</div>
+    </div>
+    <div class="status-item">
+      <div class="status-label">Density (p/m²)</div>
+      <div class="status-val info" id="statusRho">0.16</div>
+    </div>
+    <div class="status-item">
+      <div class="status-label">Velocity (m/s)</div>
+      <div class="status-val info" id="statusV">0.13</div>
+    </div>
+    <div class="status-item">
+      <div class="status-label">dρ/dt</div>
+      <div class="status-val warn" id="statusDrho">-0.43</div>
+    </div>
+    <div class="status-item">
+      <div class="status-label">FPS</div>
+      <div class="status-val info" id="statusFps">12.8</div>
+    </div>
+    <div class="status-item">
+      <div class="status-label">Device</div>
+      <div class="status-val info" id="statusDevice">CUDA</div>
+    </div>
+    <div class="risk-pill">
+      <div class="risk-label-text">RISK LEVEL</div>
+      <div class="risk-value" id="riskValue">LOW</div>
+    </div>
+  </div>
+
+  <!-- Video Area -->
+  <div class="video-area">
+    <div class="corner corner-tl"></div>
+    <div class="corner corner-tr"></div>
+    <div class="corner corner-bl"></div>
+    <div class="corner corner-br"></div>
+
+    <div class="video-grid">
+      <!-- Panel 1: Live Feed -->
+      <div class="panel panel-live" id="livePanel">
+        <div class="panel-label">01 · Live Feed</div>
+        <img id="videoStream" src="" style="width:100%;height:100%;object-fit:cover;display:none;" alt="Live Stream">
+        <div id="startDiv" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
+          <div style="text-align:center;">
+            <button class="btn btn-start" id="startBtn2">▶ Start Monitoring</button>
+          </div>
+        </div>
+        <div class="live-overlay" id="liveOverlay" style="display:none">
+          <div class="overlay-stat"><span class="overlay-stat-label">COUNT</span><span class="overlay-stat-val" id="overlayCount">4</span></div>
+          <div class="overlay-stat"><span class="overlay-stat-label">FPS</span><span class="overlay-stat-val" id="overlayFps">12.8</span></div>
+          <div class="overlay-stat"><span class="overlay-stat-label">RISK</span><span class="overlay-stat-val" id="overlayRisk" style="color:var(--low)">LOW</span></div>
+        </div>
+      </div>
+
+      <!-- Panel 2: Heatmap -->
+      <div class="panel">
+        <div class="panel-label">02 · Density Heatmap</div>
+        <img id="heatmapImg" src="" style="width:100%;height:100%;object-fit:cover;" alt="Heatmap">
+      </div>
+
+      <!-- Panel 3: Detection -->
+      <div class="panel">
+        <div class="panel-label">03 · Detection Points</div>
+        <img id="detectionImg" src="" style="width:100%;height:100%;object-fit:cover;" alt="Detection">
+      </div>
+
+      <!-- Panel 4: Scatter -->
+      <div class="panel">
+        <div class="panel-label">04 · Scatter Plot</div>
+        <img id="scatterImg" src="" style="width:100%;height:100%;object-fit:cover;" alt="Scatter">
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+
+    <!-- Risk Gauge -->
+    <div class="sidebar-section">
+      <div class="section-title">Risk Score</div>
+      <div class="risk-gauge-wrap">
+        <div style="width:100%;display:flex;justify-content:space-between;align-items:baseline;">
+          <span style="font-family:var(--mono);font-size:32px;color:var(--low);" id="gaugeScore">0.00</span>
+          <span style="font-family:var(--cond);font-weight:900;font-size:16px;letter-spacing:2px;color:var(--low);" id="gaugeLevel">LOW</span>
+        </div>
+        <div class="gauge">
+          <div class="gauge-fill" id="gaugeFill" style="width:2%;"></div>
+        </div>
+        <div class="gauge-labels">
+          <span>0.0</span><span>0.4</span><span>0.7</span><span>1.0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="sidebar-section">
+      <div class="section-title">Metrics</div>
+      <div class="metric-grid">
+        <div class="metric-card low-card" id="metricCountCard">
+          <div class="metric-name">Count</div>
+          <div class="metric-number" id="metricCount">4</div>
+        </div>
+        <div class="metric-card" id="metricRhoCard">
+          <div class="metric-name">Density</div>
+          <div class="metric-number" id="metricRho">0.16<span class="metric-unit">p/m²</span></div>
+        </div>
+        <div class="metric-card" id="metricVCard">
+          <div class="metric-name">Velocity</div>
+          <div class="metric-number" id="metricV">0.13<span class="metric-unit">m/s</span></div>
+        </div>
+        <div class="metric-card warn-card" id="metricDrhoCard">
+          <div class="metric-name">dρ/dt</div>
+          <div class="metric-number" id="metricDrho" style="color:var(--warn);">-0.43</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- History Chart -->
+    <div class="sidebar-section">
+      <div class="section-title">History</div>
+      <div class="chart-area">
+        <svg class="chart-svg" viewBox="0 0 280 100" preserveAspectRatio="none" id="chartSvg">
+          <defs>
+            <linearGradient id="densGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#00d4ff" stop-opacity="0.3"/>
+              <stop offset="100%" stop-color="#00d4ff" stop-opacity="0"/>
+            </linearGradient>
+            <linearGradient id="riskGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#ff6b35" stop-opacity="0.3"/>
+              <stop offset="100%" stop-color="#ff6b35" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <!-- Grid -->
+          <line x1="0" y1="25" x2="280" y2="25" stroke="#1e2d42" stroke-width="0.5"/>
+          <line x1="0" y1="50" x2="280" y2="50" stroke="#1e2d42" stroke-width="0.5"/>
+          <line x1="0" y1="75" x2="280" y2="75" stroke="#1e2d42" stroke-width="0.5"/>
+          <!-- Density area -->
+          <path id="densArea" d="M0,65 L20,60 L40,55 L60,58 L80,52 L100,50 L120,48 L140,50 L160,47 L180,45 L200,43 L220,45 L240,42 L260,40 L280,38 L280,100 L0,100 Z"
+                fill="url(#densGrad)"/>
+          <path id="densLine" class="chart-line" d="M0,65 L20,60 L40,55 L60,58 L80,52 L100,50 L120,48 L140,50 L160,47 L180,45 L200,43 L220,45 L240,42 L260,40 L280,38"
+                fill="none" stroke="#00d4ff" stroke-width="1.5"/>
+          <!-- Risk area -->
+          <path id="riskArea" d="M0,85 L20,82 L40,80 L60,75 L80,78 L100,72 L120,68 L140,70 L160,65 L180,60 L200,58 L220,62 L240,55 L260,50 L280,48 L280,100 L0,100 Z"
+                fill="url(#riskGrad)"/>
+          <path id="riskLine" class="chart-line" d="M0,85 L20,82 L40,80 L60,75 L80,78 L100,72 L120,68 L140,70 L160,65 L180,60 L200,58 L220,62 L240,55 L260,50 L280,48"
+                fill="none" stroke="#ff6b35" stroke-width="1.5"/>
+        </svg>
+      </div>
+      <div class="chart-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Density</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--accent2)"></div>Risk</div>
+      </div>
+    </div>
+
+    <!-- Alert Feed -->
+    <div class="sidebar-section">
+      <div class="section-title">Alerts</div>
+      <div class="alert-list" id="alertList">
+        <div class="alert-item low">
+          <div class="alert-time">21:43:49</div>
+          <div class="alert-msg">Monitoring started · CAM-01 active</div>
+        </div>
+        <div class="alert-item low">
+          <div class="alert-time">21:43:42</div>
+          <div class="alert-msg">Count stable · density nominal</div>
+        </div>
+        <div class="alert-item warn">
+          <div class="alert-time">21:43:10</div>
+          <div class="alert-msg">Density spike detected · dρ/dt = 0.61</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Camera Select -->
+    <div class="sidebar-section">
+      <div class="section-title">Cameras</div>
+      <div class="cam-list">
+        <div class="cam-item active"><div class="cam-dot"></div>CAM-01 · WEBCAM · 1920×1080</div>
+        <div class="cam-item"><div class="cam-dot"></div>CAM-02 · RTSP · offline</div>
+        <div class="cam-item"><div class="cam-dot"></div>CAM-03 · FILE · standby</div>
+      </div>
+    </div>
+
+    <!-- System Status -->
+    <div class="sidebar-section">
+      <div class="section-title">System</div>
+      <div class="sys-list">
+        <div class="sys-row"><span class="sys-key">Device</span><span class="sys-val ok" id="sysDevice">CUDA · RTX</span></div>
+        <div class="sys-row"><span class="sys-key">Model</span><span class="sys-val ok">P2PNet VGG16-BN</span></div>
+        <div class="sys-row"><span class="sys-key">Weights</span><span class="sys-val ok">SHTechA.pth</span></div>
+        <div class="sys-row"><span class="sys-key">Threshold</span><span class="sys-val">0.50</span></div>
+        <div class="sys-row"><span class="sys-key">Inf Scale</span><span class="sys-val">0.40×</span></div>
+        <div class="sys-row"><span class="sys-val ok" id="uptime">00:00:07</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // Live clock
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      now.toTimeString().slice(0,8);
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // Uptime counter
+  let seconds = 7;
+  setInterval(() => {
+    seconds++;
+    const h = String(Math.floor(seconds/3600)).padStart(2,'0');
+    const m = String(Math.floor((seconds%3600)/60)).padStart(2,'0');
+    const s = String(seconds%60).padStart(2,'0');
+    document.getElementById('uptime').textContent = `${h}:${m}:${s}`;
+  }, 1000);
+
+  // Camera selection
+  document.querySelectorAll('.cam-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.cam-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+    });
+  });
+
+  // Start/Stop buttons
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const startBtn2 = document.getElementById('startBtn2');
+  const heatmapImg = document.getElementById('heatmapImg');
+  const detectionImg = document.getElementById('detectionImg');
+  const scatterImg = document.getElementById('scatterImg');
+
+  let statusInterval, historyInterval;
+
+  function startMonitoring() {
+    const t = Date.now();
+    videoStream.src = `/video_feed?method=p2pnet&panel=live&t=${t}`;
+    heatmapImg.src = `/video_feed?method=p2pnet&panel=heatmap&t=${t}`;
+    detectionImg.src = `/video_feed?method=p2pnet&panel=detection&t=${t}`;
+    scatterImg.src = `/video_feed?method=p2pnet&panel=scatter&t=${t}`;
+    videoStream.style.display = 'block';
+    startDiv.style.display = 'none';
+    liveOverlay.style.display = 'flex';
+    startBtn.style.display = 'none';
+    stopBtn.style.display = 'inline-block';
+    statusInterval = setInterval(pollStatus, 500);
+    historyInterval = setInterval(pollHistory, 1500);
+  }
+
+  function stopMonitoring() {
+    clearInterval(statusInterval);
+    clearInterval(historyInterval);
+    videoStream.style.display = 'none';
+    videoStream.src = '';
+    startDiv.style.display = 'flex';
+    liveOverlay.style.display = 'none';
+    startBtn.style.display = 'inline-block';
+    stopBtn.style.display = 'none';
+  }
+
+  startBtn.addEventListener('click', startMonitoring);
+  startBtn2.addEventListener('click', startMonitoring);
+  stopBtn.addEventListener('click', stopMonitoring);
+
+  // Fetch status
+  async function pollStatus() {
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+      if (!data.ok) return;
+      const m = data.metrics;
+      // Update status strip
+      document.getElementById('statusCount').textContent = m.count;
+      document.getElementById('statusRho').textContent = (m.rho ?? 0).toFixed(2);
+      document.getElementById('statusV').textContent = (m.v ?? 0).toFixed(2);
+      document.getElementById('statusDrho').textContent = (m.drho_dt ?? 0).toFixed(2);
+      document.getElementById('statusFps').textContent = (m.fps ?? 0).toFixed(1);
+      document.getElementById('statusDevice').textContent = m.device || '-';
+      document.getElementById('riskValue').textContent = m.risk_level || 'LOW';
+      // Update metrics
+      document.getElementById('metricCount').textContent = m.count;
+      document.getElementById('metricRho').textContent = (m.rho ?? 0).toFixed(2);
+      document.getElementById('metricV').textContent = (m.v ?? 0).toFixed(2);
+      document.getElementById('metricDrho').textContent = (m.drho_dt ?? 0).toFixed(2);
+      // Update gauge
+      document.getElementById('gaugeScore').textContent = (m.risk ?? 0).toFixed(2);
+      document.getElementById('gaugeLevel').textContent = m.risk_level || 'LOW';
+      document.getElementById('gaugeFill').style.width = Math.min(100, (m.risk ?? 0) * 100) + '%';
+      // Update overlay
+      document.getElementById('overlayCount').textContent = m.count;
+      document.getElementById('overlayFps').textContent = (m.fps ?? 0).toFixed(1);
+      document.getElementById('overlayRisk').textContent = m.risk_level || 'LOW';
+      // Update classes for colors
+      updateColors(m);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function updateColors(m) {
+    // Status vals
+    const statusCount = document.getElementById('statusCount');
+    statusCount.className = 'status-val low';
+    const statusDrho = document.getElementById('statusDrho');
+    statusDrho.className = 'status-val ' + (Math.abs(m.drho_dt ?? 0) > 0.5 ? 'warn' : 'info');
+    // Metric cards
+    const metricDrhoCard = document.getElementById('metricDrhoCard');
+    metricDrhoCard.className = 'metric-card ' + (Math.abs(m.drho_dt ?? 0) > 0.5 ? 'warn-card' : '');
+    const metricDrho = document.getElementById('metricDrho');
+    metricDrho.style.color = Math.abs(m.drho_dt ?? 0) > 0.5 ? 'var(--warn)' : 'var(--text)';
+    // Gauge
+    const gaugeScore = document.getElementById('gaugeScore');
+    const gaugeLevel = document.getElementById('gaugeLevel');
+    if (m.risk_level === 'CRITICAL') {
+      gaugeScore.style.color = 'var(--crit)';
+      gaugeLevel.style.color = 'var(--crit)';
+    } else if (m.risk_level === 'WARNING') {
+      gaugeScore.style.color = 'var(--warn)';
+      gaugeLevel.style.color = 'var(--warn)';
+    } else {
+      gaugeScore.style.color = 'var(--low)';
+      gaugeLevel.style.color = 'var(--low)';
+    }
+    // Overlay risk
+    const overlayRisk = document.getElementById('overlayRisk');
+    overlayRisk.style.color = m.risk_level === 'CRITICAL' ? 'var(--crit)' : m.risk_level === 'WARNING' ? 'var(--warn)' : 'var(--low)';
+  }
+
+  // Fetch history
+  async function pollHistory() {
+    try {
+      const res = await fetch('/api/history?limit=60');
+      const data = await res.json();
+      if (!data.ok) return;
+      const items = data.items || [];
+      updateChart(items);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function updateChart(items) {
+    if (!items.length) return;
+    const densPath = generatePath(items.map(x => x.rho || 0), 8.0, false);
+    const riskPath = generatePath(items.map(x => x.risk || 0), 1.0, true);
+    document.getElementById('densArea').setAttribute('d', densPath.area);
+    document.getElementById('densLine').setAttribute('d', densPath.line);
+    document.getElementById('riskArea').setAttribute('d', riskPath.area);
+    document.getElementById('riskLine').setAttribute('d', riskPath.line);
+  }
+
+  function generatePath(arr, yMax, isRisk) {
+    const w = 280;
+    const h = 100;
+    const len = arr.length;
+    if (!len) return { area: '', line: '' };
+    let line = 'M0,' + (h - (arr[0] / yMax) * 70) + ' ';
+    let area = line;
+    for (let i = 1; i < len; i++) {
+      const x = (i / (len - 1)) * w;
+      const yNorm = Math.min(1, arr[i] / yMax);
+      const y = h - yNorm * 70;
+      line += 'L' + x + ',' + y + ' ';
+      area += 'L' + x + ',' + y + ' ';
+    }
+    if (isRisk) {
+      area += 'L' + w + ',' + h + ' L0,' + h + ' Z';
+    } else {
+      area += 'L' + w + ',' + (h - (arr[len-1] / yMax) * 70) + ' L' + w + ',' + h + ' L0,' + h + ' Z';
+    }
+    return { line, area };
+  }
+
+  // Initial poll
+  pollStatus();
+  pollHistory();
+
+  // Dashboard GPS (browser geolocation) -> backend (/api/gps)
+  (function initDashboardGps() {
+    if (!('geolocation' in navigator)) return;
+
+    let lastSentAt = 0;
+    const SEND_EVERY_MS = 3000;
+    let watchId = null;
+
+    async function sendGps(pos) {
+      const now = Date.now();
+      if (now - lastSentAt < SEND_EVERY_MS) return;
+      lastSentAt = now;
+
+      try {
+        await fetch('/api/gps', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lat: pos.coords.latitude,
+            lon: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            ts: now / 1000.0,
+          })
+        });
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    function startWatch() {
+      if (watchId !== null) return;
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => { sendGps(pos); },
+        (_err) => {
+          // ignore (permission denied / timeout)
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 2000,
+          timeout: 10000,
+        }
+      );
+    }
+
+    // Start on page load AND again when monitoring starts (to trigger permission prompt on user action)
+    startWatch();
+    const _origStartMonitoring = startMonitoring;
+    startMonitoring = function () {
+      startWatch();
+      return _origStartMonitoring.apply(this, arguments);
+    };
+  })();
+</script>
+</body>
+</html>
