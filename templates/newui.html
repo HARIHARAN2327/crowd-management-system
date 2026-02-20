@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CrowdOS · Smart City Command Center</title>
+
+    <!-- Leaflet CSS -->
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='leaflet/leaflet.css') }}"
+    />
+
+    <!-- Command Center stylesheet -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/newui.css') }}" />
+  </head>
+  <body>
+
+    <!-- ░░ SCANLINE ATMOSPHERE LAYER ░░ -->
+    <div class="scanline" aria-hidden="true"></div>
+
+    <!-- ═══════════════════════════════════════════════════
+         SIDEBAR NAVIGATION
+    ════════════════════════════════════════════════════ -->
+    <nav id="sidebar" aria-label="Main navigation">
+
+      <div class="sidebar-logo" title="CrowdOS">🏙</div>
+
+      <a href="#" class="nav-item active" title="Dashboard">
+        <span class="nav-icon">📡</span>
+        <span class="nav-label">Dashboard</span>
+      </a>
+      <a href="#" class="nav-item" title="Live Map">
+        <span class="nav-icon">🗺</span>
+        <span class="nav-label">Live Map</span>
+      </a>
+      <a href="#" class="nav-item" title="Cameras">
+        <span class="nav-icon">📷</span>
+        <span class="nav-label">Cameras</span>
+      </a>
+      <a href="#" class="nav-item" title="Alerts">
+        <span class="nav-icon">🔔</span>
+        <span class="nav-label">Alerts</span>
+      </a>
+      <a href="#" class="nav-item" title="Reports">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Reports</span>
+      </a>
+
+      <div class="sidebar-divider"></div>
+
+      <a href="#" class="nav-item nav-bottom" title="Settings">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Settings</span>
+      </a>
+    </nav>
+
+    <!-- ═══════════════════════════════════════════════════
+         TOP HEADER
+    ════════════════════════════════════════════════════ -->
+    <header>
+      <div class="header-left">
+        <h1>Officer Map Dashboard</h1>
+        <div class="sub">
+          Live GPS + CRITICAL alert zones from <code>POST /api/alert</code>
+        </div>
+      </div>
+
+      <div class="header-right row">
+        <!-- Status pill — dot class + text written by newui.js (unchanged) -->
+        <div class="pill">
+          <span class="dot" id="statusDot"></span>
+          <span id="statusText">Waiting</span>
+        </div>
+
+        <!-- Counters — values written by newui.js (ids unchanged) -->
+        <div class="pill">Total alerts:&nbsp;<strong><span id="count">0</span></strong></div>
+        <div class="pill">CRITICAL:&nbsp;<strong><span id="criticalCount">0</span></strong></div>
+
+        <!-- Refresh — event wired by newui.js (id unchanged) -->
+        <button id="refreshBtn" type="button">↻&nbsp;Refresh</button>
+      </div>
+    </header>
+
+    <!-- ═══════════════════════════════════════════════════
+         TOAST ALERT PANEL  (fixed top-right, JS-populated)
+    ════════════════════════════════════════════════════ -->
+    <div id="alertPanel" aria-live="polite" aria-label="Live alert notifications"></div>
+
+    <!-- ═══════════════════════════════════════════════════
+         MAIN CONTENT
+    ════════════════════════════════════════════════════ -->
+    <main>
+
+      <!-- ── KPI SUMMARY CARDS ──────────────────────────── -->
+      <div class="kpi-row">
+
+        <div class="kpi-card kpi-default">
+          <div class="kpi-header">
+            <span class="kpi-label">Total Crowd</span>
+            <div class="kpi-icon">👥</div>
+          </div>
+          <div class="kpi-value" id="kpiCrowd">—</div>
+          <div class="kpi-trend">🔺 Updating live</div>
+          <div class="kpi-bg-num" aria-hidden="true">POP</div>
+        </div>
+
+        <div class="kpi-card kpi-safe">
+          <div class="kpi-header">
+            <span class="kpi-label">Active Cameras</span>
+            <div class="kpi-icon">📷</div>
+          </div>
+          <div class="kpi-value" id="kpiCameras">24</div>
+          <div class="kpi-trend">● All systems nominal</div>
+          <div class="kpi-bg-num" aria-hidden="true">CAM</div>
+        </div>
+
+        <div class="kpi-card kpi-crit">
+          <div class="kpi-header">
+            <span class="kpi-label">Critical Zones</span>
+            <div class="kpi-icon">🚨</div>
+          </div>
+          <!-- Mirrors #criticalCount from newui.js -->
+          <div class="kpi-value" id="kpiCritZones">0</div>
+          <div class="kpi-trend" id="kpiCritTrend">No active threats</div>
+          <div class="kpi-bg-num" aria-hidden="true">⚠</div>
+        </div>
+
+        <div class="kpi-card kpi-warn">
+          <div class="kpi-header">
+            <span class="kpi-label">Live Alerts</span>
+            <div class="kpi-icon">🔔</div>
+          </div>
+          <!-- Mirrors #count from newui.js -->
+          <div class="kpi-value" id="kpiAlerts">0</div>
+          <div class="kpi-trend">Last 60 minutes</div>
+          <div class="kpi-bg-num" aria-hidden="true">!</div>
+        </div>
+
+      </div><!-- /.kpi-row -->
+
+      <!-- ── MAP ───────────────────────────────────────── -->
+      <div class="section-title">Live Tactical Map</div>
+
+      <!-- id="map" must stay — Leaflet initialised by newui.js -->
+      <div id="map" role="region" aria-label="Live crowd density map"></div>
+
+      <!-- ── ALERTS GRID ────────────────────────────────── -->
+      <div class="section-title">Recent Alerts</div>
+
+      <!-- id="empty" shown/hidden by newui.js — do not remove -->
+      <div id="empty" class="empty" style="display:none">
+        <div style="font-size:32px;margin-bottom:10px;opacity:.35">📡</div>
+        No alerts received yet — monitoring live feed…
+      </div>
+
+      <!-- id="grid" populated with .card children by newui.js — do not remove -->
+      <div id="grid" class="grid"></div>
+
+    </main>
+
+    <!-- ═══════════════════════════════════════════════════
+         BOTTOM STATUS BAR
+    ════════════════════════════════════════════════════ -->
+    <div id="statusBar" aria-label="System status bar">
+      <div class="sb-item active">🟢 System Active</div>
+      <span class="sb-sep">|</span>
+      <div class="sb-item">🟠 Monitoring</div>
+      <span class="sb-sep">|</span>
+      <div class="sb-item">🔴 Critical:&nbsp;<strong id="sbCritCount">0</strong></div>
+      <span class="sb-sep">|</span>
+      <div class="sb-item">CrowdOS v2.0</div>
+      <div class="sb-item sb-time" id="sbClock"></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════
+         LEAFLET JS
+    ════════════════════════════════════════════════════ -->
+    <script
+      src="{{ url_for('static', filename='leaflet/leaflet.js') }}"
+    ></script>
+
+    <!-- ═══════════════════════════════════════════════════
+         UI ENHANCEMENT LAYER
+         Observation only — zero changes to existing logic
+    ════════════════════════════════════════════════════ -->
+    <script>
+      /* ── 1. Live clock in status bar ──────────────────── */
+      (function () {
+        const el = document.getElementById('sbClock');
+        function tick() {
+          if (el) el.textContent = new Date().toLocaleTimeString('en-IN', { hour12: false });
+        }
+        tick();
+        setInterval(tick, 1000);
+      })();
+
+      /* ── 2. Smooth animated number counter ────────────── */
+      function animateCount(el, target) {
+        if (!el) return;
+        const start = parseInt(el.textContent) || 0;
+        const end   = parseInt(target)         || 0;
+        if (start === end) return;
+        let step = 0, steps = 30;
+        const inc = (end - start) / steps;
+        let cur = start;
+        const t = setInterval(() => {
+          cur += inc;
+          el.textContent = Math.round(cur);
+          if (++step >= steps) { el.textContent = end; clearInterval(t); }
+        }, 16);
+      }
+
+      /* ── 3. Mirror newui.js counters → KPI cards ──────── */
+      function mirror(srcId, destId) {
+        const src  = document.getElementById(srcId);
+        const dest = document.getElementById(destId);
+        if (!src || !dest) return;
+        new MutationObserver(() => {
+          animateCount(dest, src.textContent);
+
+          if (srcId === 'criticalCount') {
+            /* also sync status-bar and trend label */
+            const sb = document.getElementById('sbCritCount');
+            if (sb) sb.textContent = src.textContent;
+            const tr = document.getElementById('kpiCritTrend');
+            if (tr) {
+              const n = parseInt(src.textContent) || 0;
+              tr.textContent = n > 0
+                ? `⚠ ${n} active threat${n > 1 ? 's' : ''}`
+                : 'No active threats';
+            }
+          }
+        }).observe(src, { childList: true, characterData: true, subtree: true });
+      }
+
+      mirror('count',         'kpiAlerts');
+      mirror('criticalCount', 'kpiCritZones');
+
+      /* ── 4. Slide-in toast when a new .card enters #grid ─ */
+      (function () {
+        const panel = document.getElementById('alertPanel');
+        const grid  = document.getElementById('grid');
+        if (!panel || !grid) return;
+
+        function toast(level, location, detail) {
+          const isCrit = /critical/i.test(level);
+          const isWarn = /warn/i.test(level);
+          const div    = document.createElement('div');
+          div.className = 'alert-toast' + (isCrit ? ' critical' : isWarn ? ' warning' : '');
+
+          const icon  = isCrit ? '🚨' : isWarn ? '⚠️' : 'ℹ️';
+          const label = isCrit ? 'CRITICAL ALERT' : isWarn ? 'WARNING' : 'NOTICE';
+          const time  = new Date().toLocaleTimeString('en-IN', { hour12: false });
+
+          div.innerHTML = `
+            <div class="toast-icon">${icon}</div>
+            <div class="toast-body">
+              <div class="toast-title">${label} — ${location || 'Unknown Zone'}</div>
+              <div class="toast-sub">${detail || ''}</div>
+              <div class="toast-time">${time}</div>
+              ${isCrit
+                ? '<div class="sound-wave"><span></span><span></span><span></span><span></span><span></span></div>'
+                : ''}
+            </div>`;
+
+          panel.prepend(div);
+
+          /* auto-dismiss after 7 s */
+          setTimeout(() => {
+            div.style.cssText += 'opacity:0;transform:translateX(20px);transition:opacity .3s,transform .3s;';
+            setTimeout(() => div.remove(), 350);
+          }, 7000);
+
+          /* keep max 3 visible */
+          while (panel.children.length > 3) panel.lastChild.remove();
+        }
+
+        new MutationObserver(mutations => {
+          mutations.forEach(m => m.addedNodes.forEach(node => {
+            if (node.nodeType !== 1 || !node.classList.contains('card')) return;
+            const lvl    = node.querySelector('.lvl');
+            const loc    = node.querySelector('.loc');
+            const detail = Array.from(node.querySelectorAll('.v'))
+                               .slice(0, 2).map(v => v.textContent.trim()).join(' · ');
+
+            const levelText = lvl?.textContent || '';
+            const isCrit = /critical/i.test(levelText);
+            if (isCrit) {
+              const toastTs = Number(node.getAttribute('data-toast-ts') || 0);
+              const suppressUntil = Number(window.__toastSuppressCriticalUntil || 0);
+              if (Number.isFinite(toastTs) && Number.isFinite(suppressUntil) && toastTs > 0 && toastTs <= suppressUntil) {
+                return;
+              }
+            }
+            toast(levelText, loc?.textContent, detail);
+          }));
+        }).observe(grid, { childList: true });
+      })();
+
+      /* ── 5. Button ripple effect ──────────────────────── */
+      document.head.insertAdjacentHTML('beforeend',
+        '<style>@keyframes _ripple{to{transform:scale(3);opacity:0}}</style>');
+
+      document.addEventListener('click', e => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const r    = document.createElement('span');
+        const rect = btn.getBoundingClientRect();
+        Object.assign(r.style, {
+          position:     'absolute',
+          borderRadius: '50%',
+          background:   'rgba(0,200,255,0.22)',
+          width:        '80px',
+          height:       '80px',
+          left:         `${e.clientX - rect.left - 40}px`,
+          top:          `${e.clientY - rect.top  - 40}px`,
+          transform:    'scale(0)',
+          animation:    '_ripple .6s linear',
+          pointerEvents:'none',
+        });
+        btn.style.cssText += ';position:relative;overflow:hidden;';
+        btn.appendChild(r);
+        setTimeout(() => r.remove(), 620);
+      });
+
+      /* ── 6. Sidebar nav active-link toggle ────────────── */
+      document.querySelectorAll('#sidebar .nav-item').forEach(item => {
+        item.addEventListener('click', e => {
+          e.preventDefault();
+          document.querySelectorAll('#sidebar .nav-item')
+                  .forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+        });
+      });
+    </script>
+
+    <!-- ═══════════════════════════════════════════════════
+         ORIGINAL APPLICATION JS  (loaded last, untouched)
+    ════════════════════════════════════════════════════ -->
+    <script src="{{ url_for('static', filename='js/newui.js') }}"></script>
+
+  </body>
+</html>

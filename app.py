@@ -12,6 +12,8 @@ import time
 
 import gps_state
 
+import torch
+
 
 from werkzeug.utils import secure_filename
 
@@ -30,16 +32,33 @@ event = Event()
 method = ''
 
 
-_p2pnet_camera = None
+_cameras = {}
+_current_source = "webcam"
+
+VIDEO_SOURCES = {
+    "cam1": "static/cam1.mp4",
+    "cam2": "static/cam2.mp4",
+    "cam3": "static/cam3.mp4",
+    "cam4": "static/cam4.mp4",
+    "webcam": ""
+}
 
 _metrics_history = deque(maxlen=600) 
 
 
-def _get_p2pnet_camera(fileName: str):
-    global _p2pnet_camera
-    if _p2pnet_camera is None:
-        _p2pnet_camera = VideoCameraP2PNet(fileName or '')
-    return _p2pnet_camera
+def _get_p2pnet_camera(source: str = "webcam"):
+    global _cameras, _current_source
+    _current_source = source
+
+    if source not in VIDEO_SOURCES:
+        source = "webcam"
+
+    if source not in _cameras:
+        print(f"[INFO] Starting camera: {source}")
+        src = VIDEO_SOURCES[source]
+        _cameras[source] = VideoCameraP2PNet(src)
+
+    return _cameras[source]
 
 
 def _record_metrics_from_camera(camera):
@@ -113,8 +132,8 @@ def gen(camera):
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
 
-def gen_p2pnet(panel):
-    camera = _get_p2pnet_camera('')
+def gen_p2pnet(panel, source="webcam"):
+    camera = _get_p2pnet_camera(source)
     while True:
         frame = camera.get_frame(panel=panel)
         _record_metrics_from_camera(camera)
@@ -130,8 +149,9 @@ def gen_p2pnet(panel):
 def video_feed():
     method = request.args.get('method', 'p2pnet')
     panel = request.args.get('panel', 'grid')
+    source = request.args.get('source', _current_source or 'webcam')
     if method == 'p2pnet':
-        return Response(gen_p2pnet(panel), mimetype='multipart/x-mixed-replace; boundary=frame')
+        return Response(gen_p2pnet(panel, source), mimetype='multipart/x-mixed-replace; boundary=frame')
 
     else:
         return "Method not supported", 400
@@ -140,7 +160,7 @@ def video_feed():
 @app.route('/api/status', methods=['GET'])
 def api_status():
     """Latest metrics for dashboard."""
-    cam = _get_p2pnet_camera('')
+    cam = _get_p2pnet_camera(_current_source or "webcam")
     m = getattr(cam, 'latest_metrics', None)
     if not isinstance(m, dict) or not m:
         return jsonify({
@@ -163,6 +183,34 @@ def api_history():
         'ok': True,
         'count': len(items),
         'items': items
+    })
+
+
+@app.route('/api/runtime', methods=['GET'])
+def api_runtime():
+    cam = _get_p2pnet_camera(_current_source or "webcam")
+    prof = getattr(cam, 'prof', None)
+    try:
+        from camera_p2pnet import TORCH_COMPILE_ENABLED
+    except Exception:
+        TORCH_COMPILE_ENABLED = False
+
+    gpu_name = None
+    if torch.cuda.is_available():
+        try:
+            gpu_name = torch.cuda.get_device_name(0)
+        except Exception:
+            gpu_name = None
+
+    return jsonify({
+        'ok': True,
+        'torch_version': getattr(torch, '__version__', None),
+        'cuda_available': bool(torch.cuda.is_available()),
+        'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+        'gpu_name': gpu_name,
+        'torch_compile_enabled': bool(TORCH_COMPILE_ENABLED),
+        'source': _current_source,
+        'profiler': prof if isinstance(prof, dict) else {},
     })
 
 

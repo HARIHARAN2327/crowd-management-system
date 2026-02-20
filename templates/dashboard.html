@@ -730,8 +730,8 @@
     <div class="sidebar-section">
       <div class="section-title">Cameras</div>
       <div class="cam-list">
-        <div class="cam-item active"><div class="cam-dot"></div>CAM-01 · WEBCAM · 1920×1080</div>
-        <div class="cam-item"><div class="cam-dot"></div>CAM-02 · RTSP · offline</div>
+        <div class="cam-item active" onclick="switchCamera('webcam')"><div class="cam-dot"></div>CAM-01 · WEBCAM · LIVE</div>
+        <div class="cam-item" onclick="switchCamera('raspberry')"><div class="cam-dot"></div>CAM-02 · RASPBERRY PI · SIMULATOR</div>
         <div class="cam-item"><div class="cam-dot"></div>CAM-03 · FILE · standby</div>
       </div>
     </div>
@@ -789,21 +789,62 @@
   const scatterImg = document.getElementById('scatterImg');
 
   let statusInterval, historyInterval;
+  let currentSource = "webcam";
 
-  function startMonitoring() {
+function switchCamera(source)
+{
+    currentSource = source;
+
     const t = Date.now();
-    videoStream.src = `/video_feed?method=p2pnet&panel=live&t=${t}`;
-    heatmapImg.src = `/video_feed?method=p2pnet&panel=heatmap&t=${t}`;
-    detectionImg.src = `/video_feed?method=p2pnet&panel=detection&t=${t}`;
-    scatterImg.src = `/video_feed?method=p2pnet&panel=scatter&t=${t}`;
+
+    if(source === "raspberry")
+    {
+        videoStream.src =
+            `/video_feed?source=cam1&panel=grid&t=${t}`;
+
+        heatmapImg.src =
+            `/video_feed?source=cam2&panel=grid&t=${t}`;
+
+        detectionImg.src =
+            `/video_feed?source=cam3&panel=grid&t=${t}`;
+
+        scatterImg.src =
+            `/video_feed?source=cam4&panel=grid&t=${t}`;
+    }
+    else
+    {
+        videoStream.src =
+            `/video_feed?source=webcam&panel=grid&t=${t}`;
+
+        heatmapImg.src =
+            `/video_feed?source=webcam&panel=grid&t=${t}`;
+
+        detectionImg.src =
+            `/video_feed?source=webcam&panel=grid&t=${t}`;
+
+        scatterImg.src =
+            `/video_feed?source=webcam&panel=grid&t=${t}`;
+    }
+}
+
+
+
+function startMonitoring()
+{
+    switchCamera(currentSource);
+
     videoStream.style.display = 'block';
     startDiv.style.display = 'none';
     liveOverlay.style.display = 'flex';
+
     startBtn.style.display = 'none';
     stopBtn.style.display = 'inline-block';
+
     statusInterval = setInterval(pollStatus, 500);
     historyInterval = setInterval(pollHistory, 1500);
-  }
+}
+
+
 
   function stopMonitoring() {
     clearInterval(statusInterval);
@@ -932,59 +973,6 @@
   // Initial poll
   pollStatus();
   pollHistory();
-
-  // Dashboard GPS (browser geolocation) -> backend (/api/gps)
-  (function initDashboardGps() {
-    if (!('geolocation' in navigator)) return;
-
-    let lastSentAt = 0;
-    const SEND_EVERY_MS = 3000;
-    let watchId = null;
-
-    async function sendGps(pos) {
-      const now = Date.now();
-      if (now - lastSentAt < SEND_EVERY_MS) return;
-      lastSentAt = now;
-
-      try {
-        await fetch('/api/gps', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lat: pos.coords.latitude,
-            lon: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-            ts: now / 1000.0,
-          })
-        });
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    function startWatch() {
-      if (watchId !== null) return;
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => { sendGps(pos); },
-        (_err) => {
-          // ignore (permission denied / timeout)
-        },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 2000,
-          timeout: 10000,
-        }
-      );
-    }
-
-    // Start on page load AND again when monitoring starts (to trigger permission prompt on user action)
-    startWatch();
-    const _origStartMonitoring = startMonitoring;
-    startMonitoring = function () {
-      startWatch();
-      return _origStartMonitoring.apply(this, arguments);
-    };
-  })();
 </script>
 </body>
 </html>

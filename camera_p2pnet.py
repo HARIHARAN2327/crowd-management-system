@@ -6,8 +6,8 @@ import mysql.connector
 from pathlib import Path
 from threading import Thread, Lock
 from collections import deque
+
 import requests
-import gps_state
 
 import torch
 import torchvision.transforms as standard_transforms
@@ -81,16 +81,11 @@ OUT_H     = 540          # Display height
 INF_SCALE = 0.4          # Scale factor for inference frame
 THRESHOLD = 0.5          # P2PNet confidence threshold
 
-# Officer notification
 OFFICER_ALERT_URL = "http://localhost:8081/api/alert"
 OFFICER_ALERT_COOLDOWN_SEC = 10.0
-
-# Continuous region status updates (for live map)
 OFFICER_REGION_URL = "http://localhost:8081/api/region"
 OFFICER_REGION_UPDATE_INTERVAL_SEC = 1.0
 CAMERA_ID = "CAM-01"
-
-# Camera location (configure these for your deployment)
 CAMERA_LATITUDE = 0.0
 CAMERA_LONGITUDE = 0.0
 
@@ -166,6 +161,10 @@ def _has_cuda_cv2() -> bool:
 
 class VideoCamera(object):
     def __init__(self, fileName):
+        self.read_lock = Lock()
+        self.shared_frame = None
+
+        self.source = fileName
         if fileName == '':
             # Try multiple camera indices
             for cam_idx in range(3):  # 0, 1, 2
@@ -206,11 +205,8 @@ class VideoCamera(object):
 
         self.latest_metrics   = {}
 
-        # Officer notification state
         self._last_officer_alert_ts = 0.0
         self._prev_risk_level = None
-
-        # Region status state
         self._last_region_post_ts = 0.0
         
         # MySQL Logging Setup
@@ -292,7 +288,10 @@ class VideoCamera(object):
     def _inference_loop(self):
         while self.running:
             with self.lock:
-                frame = self.latest_inf_frame.copy() if self.latest_inf_frame is not None else None
+                frame = None
+                if self.latest_inf_frame is not None:
+                    frame = self.latest_inf_frame.copy()
+                    self.latest_inf_frame = None   # IMPORTANT: clear after taking
 
             if frame is None:
                 time.sleep(0.01)
@@ -320,6 +319,8 @@ class VideoCamera(object):
             except Exception as e:
                 print(f"[Inference Error] {e}")
 
+            time.sleep(0.001)
+
     # ─────────────────────────────────────────
     #  Default Error Frame
     # ─────────────────────────────────────────
@@ -335,38 +336,58 @@ class VideoCamera(object):
     #  panel: 'live', 'heatmap', 'detection', 'scatter', or 'grid'
     # ─────────────────────────────────────────
     def get_frame(self, panel='grid'):
-        ret, frame = self.video.read()
-
-        # If capture fails but we have a previous good frame, reuse it.
-        # Only show the error frame if we have never captured anything valid.
-        if not ret or frame is None:
-            if self.last_frame is None:
-                return self._default_frame()
-            frame = self.last_frame.copy()
-        else:
+    
+        # ── Read frame safely ─────────────────────
+        with self.read_lock:
+            ret, frame = self.video.read()
+    
+            if not ret or frame is None:
+            
+                # restart video if file source
+                if isinstance(self.source, str) and self.source != "":
+                    self.video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = self.video.read()
+    
+                # fallback to last frame
+                if not ret or frame is None:
+                    if self.last_frame is not None:
+                        frame = self.last_frame.copy()
+                    else:
+                        return self._default_frame()
+    
             self.last_frame = frame.copy()
-
-        # ── FPS ──────────────────────────────
+    
+    
+        # ── FPS calculation ─────────────────────
         current_time = time.time()
-        fps = 1 / (current_time - self.prev_time) if current_time > self.prev_time else 30
+        dt = current_time - self.prev_time
+        fps = 1.0 / dt if dt > 0 else 0.0
+        fps = min(fps, 30.0)
         self.prev_time = current_time
-
-        # ── Display Frame ─────────────────────
-        # This is what the user sees (2x2 grid)
+    
+    
+        # ── Display frame ─────────────────────
         display_frame = cv2.resize(frame, (OUT_W, OUT_H))
-
-        # ── Inference Frame ───────────────────
+    
+    
+        # ── Inference frame ───────────────────
         raw_h, raw_w = frame.shape[:2]
         inf_w, inf_h = _safe_inf_size(raw_w, raw_h)
         inf_frame = cv2.resize(frame, (inf_w, inf_h))
-
-        # Send inference frame to background thread
+    
+    
+        # ── Send frame to inference thread safely ─────────
         with self.lock:
-            self.latest_inf_frame = inf_frame
-            self.inf_w            = inf_w
-            self.inf_h            = inf_h
-            points                = list(self.pred_points)   # snapshot
-            predict_cnt           = self.pred_count
+        
+            if self.latest_inf_frame is None:
+                self.latest_inf_frame = inf_frame.copy()
+    
+            self.inf_w = inf_w
+            self.inf_h = inf_h
+    
+            points = list(self.pred_points)
+            predict_cnt = self.pred_count
+
 
         # ── Stampede risk metrics (approximate) ─────────────────────────
         # Density (persons/m^2)
@@ -463,17 +484,11 @@ class VideoCamera(object):
             "device": str(device.type),
         }
 
-        # Use browser GPS (dashboard machine location) if available, otherwise fallback
-        gps = gps_state.get_latest()
-        lat_to_send = gps.get('lat')
-        lon_to_send = gps.get('lon')
-        if lat_to_send is None or lon_to_send is None:
+        try:
             lat_to_send = float(CAMERA_LATITUDE)
             lon_to_send = float(CAMERA_LONGITUDE)
+            now_alert_ts = float(self.latest_metrics.get('ts', time.time()))
 
-        # Notify officer server when entering CRITICAL (with cooldown)
-        try:
-            now_alert_ts = time.time()
             entered_critical = (risk_level == "CRITICAL") and (self._prev_risk_level != "CRITICAL")
             cooldown_ok = (now_alert_ts - float(self._last_officer_alert_ts)) >= float(OFFICER_ALERT_COOLDOWN_SEC)
             if entered_critical and cooldown_ok:
@@ -484,33 +499,30 @@ class VideoCamera(object):
                     "crowd_density": float(rho),
                     "latitude": float(lat_to_send),
                     "longitude": float(lon_to_send),
-                    "timestamp": float(self.latest_metrics.get("ts", now_alert_ts)),
+                    "timestamp": float(now_alert_ts),
                 }
                 requests.post(OFFICER_ALERT_URL, json=payload, timeout=1.5)
-                self._last_officer_alert_ts = now_alert_ts
-        except Exception as _e:
-            # Best-effort notification; ignore errors to avoid breaking live stream
+                self._last_officer_alert_ts = float(now_alert_ts)
+        except Exception:
             pass
         finally:
             self._prev_risk_level = str(risk_level)
 
-        # Continuous region status update (throttled)
         try:
-            now_region_ts = time.time()
+            now_region_ts = float(self.latest_metrics.get('ts', time.time()))
             interval_ok = (now_region_ts - float(self._last_region_post_ts)) >= float(OFFICER_REGION_UPDATE_INTERVAL_SEC)
             if interval_ok:
                 region_payload = {
                     "camera_id": CAMERA_ID,
-                    "latitude": float(lat_to_send),
-                    "longitude": float(lon_to_send),
+                    "latitude": float(CAMERA_LATITUDE),
+                    "longitude": float(CAMERA_LONGITUDE),
                     "crowd_density": float(rho),
                     "risk_level": str(risk_level),
-                    "timestamp": float(self.latest_metrics.get("ts", now_region_ts)),
+                    "timestamp": float(now_region_ts),
                 }
                 requests.post(OFFICER_REGION_URL, json=region_payload, timeout=1.0)
-                self._last_region_post_ts = now_region_ts
+                self._last_region_post_ts = float(now_region_ts)
         except Exception:
-            # Best-effort; ignore errors to avoid breaking live stream
             pass
 
         # Queue for MySQL background logging
@@ -569,4 +581,6 @@ class VideoCamera(object):
             out = np.vstack([top, bottom])
 
         _, jpeg = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        return jpeg.tobytes()
+        with self.read_lock:
+            self.shared_frame = None
+        return jpeg.tobytes()   
